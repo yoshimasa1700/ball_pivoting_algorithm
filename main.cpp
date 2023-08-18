@@ -54,8 +54,13 @@ public:
 
 class BallPivotAlgorithmImpl{
 public:
+    BallPivotAlgorithmImpl(const double &ball_radius) : ball_radius_(ball_radius){}
 
     void find_seed_triangle(){
+        // decide point index.
+
+        // get 2 neighbor
+
     }
 
     std::optional<IndexT> ball_pivot(){
@@ -72,6 +77,8 @@ public:
         // define front.
         front_ = std::vector<EdgeEmbd>();
 
+        // build KD-Tree
+
         while(1){
 
             std::optional<IndexT> pivot_result = ball_pivot();
@@ -79,7 +86,6 @@ public:
             if(pivot_result &&
                (used_[pivot_result.value()] || in_front_[pivot_result.value()])
                 ){
-
                 // output triangle
 
                 // join
@@ -93,6 +99,8 @@ public:
             find_seed_triangle();
         }
     }
+
+    double ball_radius_;
 
     std::vector<bool> used_;
     std::vector<bool> in_front_;
