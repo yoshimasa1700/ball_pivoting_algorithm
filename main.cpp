@@ -1,8 +1,10 @@
 #include<iostream>
 #include<string>
+#include<optional>
 
 #include "open3d/Open3D.h"
 
+using Point = Eigen::Vector3f;
 using PointCloud = open3d::geometry::PointCloud;
 using PointCloudPtr = std::shared_ptr<PointCloud>;
 
@@ -31,12 +33,71 @@ namespace DataLoader{
 };
 
 
+using Edge = std::tuple<int, int>; // point index
+
+using IndexT = unsigned int;
+
+
+enum FLAG{
+    ACTIVE,
+    BOUNDARY,
+    FROZEN
+};
+
+
+class EdgeEmbd{
+public:
+    Edge e;
+    FLAG f;
+};
+
 
 class BallPivotAlgorithmImpl{
 public:
 
+    void find_seed_triangle(){
+    }
 
+    std::optional<IndexT> ball_pivot(){
+        return 0;
+    }
 
+    void process(PointCloudPtr pointcloud_ptr){
+        int point_count = pointcloud_ptr->points_.size();
+
+        // define flag correspond to point cloud.
+        used_ = std::vector<bool>(point_count, false);
+        in_front_ = std::vector<bool>(point_count, false);
+
+        // define front.
+        front_ = std::vector<EdgeEmbd>();
+
+        while(1){
+
+            std::optional<IndexT> pivot_result = ball_pivot();
+
+            if(pivot_result &&
+               (used_[pivot_result.value()] || in_front_[pivot_result.value()])
+                ){
+
+                // output triangle
+
+                // join
+
+                // glue(remove coincident edges)
+
+            }else{
+                // mark as boundary
+            }
+
+            find_seed_triangle();
+        }
+    }
+
+    std::vector<bool> used_;
+    std::vector<bool> in_front_;
+
+    std::vector<EdgeEmbd> front_;
 };
 
 
