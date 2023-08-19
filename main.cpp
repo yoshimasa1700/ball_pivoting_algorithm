@@ -1,5 +1,7 @@
 #include <cstdlib>
+#include <exception>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <optional>
 
@@ -10,6 +12,7 @@
 // define data type
 using num_t = float;
 using Point = Eigen::Vector3f;
+using Normal = Eigen::Vector3d;
 using PointCloud = open3d::geometry::PointCloud;
 using PointCloudPtr = std::shared_ptr<PointCloud>;
 using IndexT = unsigned int;
@@ -25,6 +28,22 @@ class EdgeEmbd{
 public:
     Edge e;
     FLAG f;
+};
+
+class Triangle{
+public:
+    Triangle(Edge e1, Edge e2, Edge e3)
+    {
+        edges[0] = e1;
+        edges[1] = e2;
+        edges[2] = e3;
+    }
+
+    IndexT getVertexIndex(const int &index){
+        return std::get<0>(edges[index]);
+    }
+
+    Edge edges[3];
 };
 
 namespace DataLoader{
@@ -102,42 +121,91 @@ using PC2KD = PointCloudAdaptor<PointCloudPtr>;
 using kd_tree_t = nanoflann::KDTreeSingleIndexAdaptor<
     nanoflann::L2_Simple_Adaptor<num_t, PC2KD>, PC2KD, 3 /* dim */
     >;
+using kd_tree_t_ptr = std::shared_ptr<kd_tree_t>;
 
 
-auto do_knn_search = [](const kd_tree_t& index) {
-    // do a knn search
-    const size_t                   num_results = 1;
-    size_t                         ret_index;
-    num_t                          out_dist_sqr;
-    nanoflann::KNNResultSet<num_t> resultSet(num_results);
-    num_t                          query_pt[3] = {0.5, 0.5, 0.5};
+bool checkNormalConsistency(Triangle tri, PointCloudPtr pointcloud_ptr){
 
-    resultSet.init(&ret_index, &out_dist_sqr);
-    index.findNeighbors(resultSet, &query_pt[0], nanoflann::SearchParams());
+    // check inner product value between edge vertices.
+    // we only check first 2 edges, because all vertices contained.
+    for(uint ind = 0; ind < 2; ++ind){
+        IndexT first = std::get<0>(tri.edges[ind]);
+        IndexT second = std::get<1>(tri.edges[ind]);
 
-    std::cout << "knnSearch(nn=" << num_results << "): \n";
-    std::cout << "ret_index=" << ret_index
-              << " out_dist_sqr=" << out_dist_sqr << std::endl;
-};
+        Normal norm1 = pointcloud_ptr->normals_[first];
+        Normal norm2 = pointcloud_ptr->normals_[second];
+        num_t dot_prod = norm1.dot(norm2);
+
+        if(dot_prod < 0)
+            return false;
+    }
+
+    return true;
+}
+
 
 class BallPivotAlgorithmImpl{
 public:
-    BallPivotAlgorithmImpl(const double &ball_radius) : ball_radius_(ball_radius){}
+    BallPivotAlgorithmImpl(const double &ball_radius) :
+        used_count_(0),
+        ball_radius_(ball_radius)
+    {}
 
-    void find_seed_triangle(const IndexT &first_point_index=0){
-        // Pick any point a  not yet used by the reconstructed triangulation.
-        IndexT first_point = first_point_index;
-        while(!used_[first_point]){
-            first_point = rand() % point_count_;
+    std::optional<Triangle> find_seed_triangle(PointCloudPtr pointcloud_ptr, const IndexT &first_point_index=0){
+
+        // This process lead inf loop bug... should be improved.
+        while(1){
+            // Pick any point that not yet used by the reconstructed triangulation.
+            IndexT first_point = first_point_index;
+            while(!used_[first_point]){
+                first_point = rand() % point_count_;
+            }
+
+            // TODO: create set_used function.
+            used_[first_point] = true;
+            used_count_++;
+
+            // all point is checked, reconstruction complete!
+            if(used_count_ >= point_count_){
+                return std::nullopt;
+            }
+
+            // Consider all pairs of points b, c in its neighborhood in order of distance from.
+            int ret_count = 3; // of course contain itsself.
+            size_t ret_index[ret_count];
+            num_t out_dist_sqr[ret_count];
+            nanoflann::KNNResultSet<num_t> resultSet(ret_count);
+            resultSet.init((size_t *)&ret_index, (num_t *)&out_dist_sqr);
+
+            kdtree_ptr_->findNeighbors(
+                resultSet,
+                (float*)pointcloud_ptr->points_[first_point].data(),
+                nanoflann::SearchParams());
+
+            // Build potential seed triangles a, b, c
+            Edge e1(first_point, ret_index[1]);
+            Edge e2(ret_index[1], ret_index[2]);
+            Edge e3(ret_index[2], first_point);
+
+            Triangle tri(e1, e2, e3);
+
+            // Check that the triangle normal is consistent with the vertex normals, i.e., pointing outward.
+            if(!checkNormalConsistency(tri, pointcloud_ptr)){
+                continue;
+            }
+
+            // Test that ball with center in the outward halfspace touches all three vertices and contains no other data point.
+            // calc ball center.
+            // radius search.
+            // if other point contains, reject
+            if(false){
+                continue;
+            }
+
+            return tri;
+
         }
-
-        // Consider all pairs of points b, c in its neighborhood in order of distance from.
-
-        // Build potential seed triangles a, b, c
-
-        // Check that the triangle normal is consistent with the vertex normals, i.e., pointing outward.
-
-        // Test that ball with center in the outward halfspace touches all three vertices and contains no other data point.
+        return std::nullopt;
     }
 
     std::optional<IndexT> ball_pivot(){
@@ -155,9 +223,8 @@ public:
         front_ = std::vector<EdgeEmbd>();
 
         // build KD-Tree
-        PointCloudAdaptor<PointCloudPtr> pointcloud_adapter(pointcloud_ptr);
-
-
+        PC2KD pointcloud_adapter(pointcloud_ptr);
+        kdtree_ptr_ = kd_tree_t_ptr(new kd_tree_t(3, pointcloud_adapter));
 
         while(1){
 
@@ -176,18 +243,20 @@ public:
                 // mark as boundary
             }
 
-            find_seed_triangle();
+            // find_seed_triangle();
         }
     }
 
     int point_count_;
+    int used_count_;
 
     double ball_radius_;
 
     std::vector<bool> used_;
     std::vector<bool> in_front_;
-
     std::vector<EdgeEmbd> front_;
+
+    kd_tree_t_ptr kdtree_ptr_;
 };
 
 
